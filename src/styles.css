@@ -387,6 +387,14 @@ textarea {
   background: #121419;
 }
 
+.result-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: contain;
+  background: #0f1116;
+}
+
 .mock-image {
   position: relative;
   display: flex;
