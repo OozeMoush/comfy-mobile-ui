@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Bookmark,
   Check,
@@ -20,6 +20,7 @@ import {
   Star,
   X,
 } from "lucide-react";
+import { createGeneration, getHistory, getJobs, type ServerGeneration } from "./api";
 
 type CategoryKey =
   | "character"
@@ -55,16 +56,9 @@ type Snapshot = {
   negativePrompt: string;
 };
 
-type QueueJob = {
-  id: string;
-  snapshot: Snapshot;
-  seed: number;
-  parentGenerationId: string | null;
-  status: "queued" | "processing";
-};
+type QueueJob = ServerGeneration;
 
-type Generation = QueueJob & {
-  createdAt: number;
+type Generation = ServerGeneration & {
   imageFavorite: boolean;
   recipeFavorite: boolean;
 };
@@ -169,7 +163,6 @@ const STORAGE = {
   extraPrompt: "comfy-mobile-ui.extraPrompt",
   globalNegative: "comfy-mobile-ui.globalNegative",
   recent: "comfy-mobile-ui.recent",
-  history: "comfy-mobile-ui.history",
 } as const;
 
 function preset(
@@ -258,9 +251,7 @@ export default function App() {
   const [recentIds, setRecentIds] = useState<string[]>(() =>
     loadLocal(STORAGE.recent, []),
   );
-  const [history, setHistory] = useState<Generation[]>(() =>
-    loadLocal(STORAGE.history, []),
-  );
+  const [history, setHistory] = useState<Generation[]>([]);
   const [queue, setQueue] = useState<QueueJob[]>([]);
   const [page, setPage] = useState<Page>("generate");
   const [activeCategory, setActiveCategory] = useState<CategoryKey | null>(null);
@@ -270,7 +261,6 @@ export default function App() {
   const [lockedSeed, setLockedSeed] = useState<number | null>(null);
   const [currentParentId, setCurrentParentId] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState("");
-  const activeTimerRef = useRef<number | null>(null);
 
   const restoredPreviousState = useMemo(
     () => localStorage.getItem(STORAGE.selection) !== null,
@@ -285,47 +275,38 @@ export default function App() {
     [globalNegative],
   );
   useEffect(() => localStorage.setItem(STORAGE.recent, JSON.stringify(recentIds)), [recentIds]);
-  useEffect(() => localStorage.setItem(STORAGE.history, JSON.stringify(history)), [history]);
 
   useEffect(() => {
-    const processing = queue.find((job) => job.status === "processing");
+    let cancelled = false;
 
-    if (processing) {
-      if (activeTimerRef.current !== null) return;
+    async function refresh() {
+      try {
+        const [jobs, records] = await Promise.all([getJobs(), getHistory()]);
+        if (cancelled) return;
 
-      activeTimerRef.current = window.setTimeout(() => {
-        const result: Generation = {
-          ...processing,
-          createdAt: Date.now(),
-          imageFavorite: false,
-          recipeFavorite: false,
-        };
-
-        setHistory((items) => [result, ...items]);
-        setQueue((items) => items.filter((job) => job.id !== processing.id));
-        activeTimerRef.current = null;
-      }, 900);
-      return;
-    }
-
-    const next = queue.find((job) => job.status === "queued");
-    if (next) {
-      setQueue((items) =>
-        items.map((job) =>
-          job.id === next.id ? { ...job, status: "processing" } : job,
-        ),
-      );
-    }
-  }, [queue]);
-
-  useEffect(
-    () => () => {
-      if (activeTimerRef.current !== null) {
-        window.clearTimeout(activeTimerRef.current);
+        setQueue(jobs);
+        setHistory((current) =>
+          records.map((record) => {
+            const previous = current.find((item) => item.id === record.id);
+            return {
+              ...record,
+              imageFavorite: previous?.imageFavorite ?? false,
+              recipeFavorite: previous?.recipeFavorite ?? false,
+            };
+          }),
+        );
+      } catch (error) {
+        console.error("Failed to refresh ComfyUI bridge state", error);
       }
-    },
-    [],
-  );
+    }
+
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const currentPrompt = useMemo(
     () => buildPrompt(catalog, selection, extraPrompt, globalNegative),
@@ -387,30 +368,44 @@ export default function App() {
     });
   }
 
-  function enqueue(snapshot: Snapshot, parentGenerationId: string | null, seed?: number) {
-    const job: QueueJob = {
-      id: uid("gen"),
-      snapshot,
-      seed: seed ?? randomSeed(),
+  async function submitGeneration(
+    snapshot: Snapshot,
+    parentGenerationId: string | null,
+    seed?: number,
+  ) {
+    const record = await createGeneration({
+      prompt: snapshot.prompt,
+      negativePrompt: snapshot.negativePrompt,
+      selection: snapshot.selection,
+      extraPrompt: snapshot.extraPrompt,
       parentGenerationId,
-      status: "queued",
-    };
-    setQueue((items) => [...items, job]);
+      seed,
+    });
+    setQueue((items) => [...items.filter((item) => item.id !== record.id), record]);
   }
 
-  function generateCurrent() {
+  async function generateCurrent() {
     const snapshot: Snapshot = {
       selection: structuredClone(selection),
       extraPrompt,
       prompt: currentPrompt.prompt,
       negativePrompt: currentPrompt.negativePrompt,
     };
-    enqueue(snapshot, currentParentId, lockedSeed ?? undefined);
+
+    try {
+      await submitGeneration(snapshot, currentParentId, lockedSeed ?? undefined);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
   }
 
-  function repeatGeneration(item: Generation) {
-    enqueue(structuredClone(item.snapshot), item.id);
-    setPage("generate");
+  async function repeatGeneration(item: Generation) {
+    try {
+      await submitGeneration(structuredClone(item.snapshot) as Snapshot, item.id);
+      setPage("generate");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function restoreGeneration(item: Generation) {
@@ -848,10 +843,14 @@ function GenerationCard(props: {
 }) {
   return (
     <article className={`generation-card ${props.large ? "large" : ""}`}>
-      <div className="mock-image" style={previewStyle(props.item.seed)}>
-        <span>Prototype preview</span>
-        <strong>{props.item.seed}</strong>
-      </div>
+      {props.item.imageUrl ? (
+        <img className="result-image" src={props.item.imageUrl} alt="" />
+      ) : (
+        <div className="mock-image" style={previewStyle(props.item.seed)}>
+          <span>{props.item.status === "failed" ? "Generation failed" : "Waiting for image"}</span>
+          <strong>{props.item.seed}</strong>
+        </div>
+      )}
 
       <div className="generation-meta">
         <span>Seed {props.item.seed}</span>
@@ -1109,8 +1108,8 @@ function SettingsPage(props: {
 
       <div className="settings-card">
         <strong>ComfyUI connection</strong>
-        <span>Not connected yet — this build is interaction-only.</span>
-        <span className="status-pill">Prototype mode</span>
+        <span>Local bridge enabled. Open /api/health to verify ComfyUI and the workflow file.</span>
+        <span className="status-pill">Bridge mode</span>
       </div>
 
       <button className="ghost-button" onClick={props.resetWorkingState}>
