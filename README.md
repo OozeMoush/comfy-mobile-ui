@@ -1,68 +1,100 @@
 # comfy-mobile-ui
 
-Mobile-first web UI for driving a local ComfyUI setup without living in the node editor.
+Mobile-first web UI for driving a local ComfyUI instance from a PC or phone.
 
-## Current prototype
+## Ports
 
-This first pass is intentionally **interaction-first**. It lets us evaluate the workflow before wiring it to the GPU:
+- Web UI: `0.0.0.0:5178`
+- Local API bridge: `127.0.0.1:8787`
+- ComfyUI default target: `127.0.0.1:8188`
 
-- fixed attribute cards with single/multi-select behavior
-- full-screen attribute picker
-- Favorites / Recent / All tabs
-- per-attribute random and "randomize everything except Character"
-- positive + attribute-level negative prompt composition
-- extra one-off prompt field
-- one-tap queueing; Generate can be tapped repeatedly
-- simulated serial queue so the interaction can be tested without ComfyUI
-- latest result controls: image favorite, recipe favorite, regenerate, restore, seed
-- searchable generation history
-- parent generation IDs stored on derived jobs
-- dedicated preset creation screen
-- global negative prompt setting
-- previous working setup restored from localStorage
-- PWA manifest and service-worker shell
+The API bridge is intentionally **not exposed to the LAN/Tailscale interface**. Browsers access it through the Vite `/api` proxy on port 5178.
 
-The gradient "images" are deliberate placeholders. **No ComfyUI API is called yet.**
+## Setup
 
-## Run
+### 1. Export the ComfyUI workflow
+
+Export the workflow you want to use in **API format** and save it as:
+
+```text
+server/workflows/base.json
+```
+
+The current bridge expects one KSampler/KSamplerAdvanced whose positive and negative inputs ultimately point at text nodes with a `text` input. The sampler seed/noise_seed is replaced for each generation.
+
+### 2. Start ComfyUI
+
+The default target is:
+
+```text
+http://127.0.0.1:8188
+```
+
+Override it if necessary:
+
+```bash
+COMFY_BASE_URL=http://127.0.0.1:8188 npm run dev
+```
+
+### 3. Start the app
 
 ```bash
 npm install
 npm run dev
 ```
 
-Vite listens on all interfaces, so the same dev server can be opened from a phone over the LAN or Tailscale once the host firewall allows it.
-
-## Build
-
-```bash
-npm run build
-npm run preview
-```
-
-## Intended architecture
+Then open on the PC:
 
 ```text
-Phone / PC browser (this app)
-        |
-        | Tailscale
-        v
-Thin local API service
-        |
-        v
-ComfyUI API / WebSocket
-        |
-        +--> full-resolution image saved on PC
-        +--> smaller preview returned to the web UI
-        +--> generation metadata/history database
+http://localhost:5178
 ```
 
-The browser should not know ComfyUI workflow node IDs. The API layer will own the workflow template and translate app-level concepts such as presets, seed, queue and future LoRA controls into ComfyUI workflow JSON.
+For a phone, open port 5178 through the PC's reachable LAN/Tailscale address.
 
-## Next implementation slice
+## Connection check
 
-1. Freeze the first usable Generate-screen interaction after hands-on testing.
-2. Add a small local API bridge.
-3. Submit a fixed ComfyUI workflow and stream job status.
-4. Replace mock previews with lightweight generated previews.
-5. Persist generation metadata server-side (SQLite is the likely default).
+With the app running, open:
+
+```text
+http://localhost:5178/api/health
+```
+
+A ready setup should report both:
+
+```json
+{
+  "comfy": true,
+  "workflow": true
+}
+```
+
+If `comfy` is false, ComfyUI is not reachable at the configured URL.
+If `workflow` is false, `server/workflows/base.json` has not been added yet.
+
+## Current features
+
+- attribute-card based prompt building
+- Favorites / Recent / All selector tabs
+- single/multi-select attributes
+- per-attribute and broad randomization
+- positive + attribute-level negative prompt composition
+- explicit Generate with independent queued snapshots
+- real ComfyUI submission through the local bridge
+- server-side polling of ComfyUI job history
+- generated image retrieval through the bridge
+- searchable generation history
+- image/recipe favorites remain UI-local for now
+- recipe restore and seed reuse
+- custom presets
+- global negative prompt
+- PWA shell
+
+## Current persistence
+
+Generation metadata is stored locally in:
+
+```text
+server/data/history.json
+```
+
+This is intentionally simple for the first connected prototype. SQLite can replace it once the interaction model settles.
