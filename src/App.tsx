@@ -409,7 +409,7 @@ export default function App() {
   }
 
   function restoreGeneration(item: Generation) {
-    setSelection(structuredClone(item.snapshot.selection));
+    setSelection(structuredClone(item.snapshot.selection) as Selection);
     setExtraPrompt(item.snapshot.extraPrompt);
     setLockedSeed(null);
     setCurrentParentId(item.id);
