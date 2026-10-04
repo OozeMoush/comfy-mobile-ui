@@ -132,3 +132,24 @@ Codex should record:
 - any product/architecture decision introduced by the implementation
 
 If a design rule changed, update docs in the same workstream.
+
+
+## Local Codex filesystem isolation
+
+For this project, Local Codex should be launched from the repository root and should treat that directory as its entire project-visible filesystem.
+
+Policy:
+
+- do not read outside the repository
+- do not enumerate parent/sibling/home directories
+- do not inspect the layout of unrelated WSL or Windows files
+- do not add external writable roots
+- do not automatically request broader filesystem permissions
+
+Repository instructions are a policy layer, not a security boundary by themselves.
+
+For technical enforcement, use Codex with a workspace-scoped sandbox and no approval path for sandbox escape. Current Codex documentation describes `workspace-write` as the profile that operates in the current workspace, with crossing the workspace boundary requiring approval. For this project's stricter preference, use a configuration where sandbox escalation is not granted.
+
+If the requirement is stronger — e.g. even host directory names outside the repository must not be observable — run Codex in an isolated container/VM and mount only this repository as project data. That is the strongest boundary because the outside host filesystem is not present in the agent environment at all.
+
+Do not weaken this isolation merely to make a command convenient. If an external file is genuinely needed, the human should deliberately copy/mount the specific file into the repository or explicitly approve that one path.
