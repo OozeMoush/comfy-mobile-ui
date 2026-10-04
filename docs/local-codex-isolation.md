@@ -14,7 +14,7 @@ The desired behavior is stricter than "do not modify files outside the repo":
 - do not report unrelated filesystem structure
 - do not grant general outbound Internet access merely to reach local ComfyUI services
 
-The normal development exception is access to the project's loopback services on ports 5178, 8787, and 8188.
+The normal development exception is command-network access to the loopback hosts `localhost` and `127.0.0.1`. The application normally uses ports 5178, 8787, and 8188, but Codex domain rules are host-scoped rather than port-scoped.
 
 ## Layers of protection
 
@@ -54,13 +54,35 @@ enabled = true
 "127.0.0.1" = "allow"
 ```
 
-Start Codex with the repository root as the current working directory:
+Start Codex with the repository root as the current working directory and strict config parsing enabled:
 
 ```bash
-codex
+codex --strict-config
 ```
 
-Do not add `--sandbox workspace-write` or a legacy `sandbox_mode` override. Permission profiles and the older sandbox settings do not compose; a legacy sandbox setting causes Codex to use the older mechanism instead of this profile.
+Do not add `--sandbox workspace-write` or a legacy `sandbox_mode` override. Permission profiles and the older sandbox settings do not compose. Importantly, repository-local removal of `sandbox_mode` is not enough: if **any loaded configuration layer** (for example a user-level config or selected Codex profile) contains `sandbox_mode`, Codex uses the older sandbox mechanism instead of `default_permissions`.
+
+### Mandatory startup verification
+
+The repository configuration is a desired policy, not proof of the effective policy. Before relying on it:
+
+1. launch `codex --strict-config`
+2. run `/debug-config` and inspect the loaded configuration layers
+   - the project `.codex/config.toml` must be active
+   - no loaded layer or selected profile may contain legacy `sandbox_mode` / `sandbox_workspace_write`
+3. run `/permissions`
+   - the active named profile must be `comfy-local`
+4. run `/status`
+   - approval policy and writable roots must match the intended repository scope
+5. from a normal WSL shell, run:
+
+```bash
+bash scripts/verify-codex-isolation.sh
+```
+
+Treat any mismatch or smoke-test failure as a stop condition. Correct the higher-precedence configuration outside Codex; do not weaken the repository policy to make the check pass.
+
+The smoke test validates the permission profile itself by exercising a repository write, a blocked repo-external read, an allowed loopback request, and a blocked fixed public-web request. It deliberately does **not** claim that CI proves the effective local Codex configuration.
 
 ### Filesystem effect
 
@@ -86,11 +108,15 @@ Network access is paired with the Codex network proxy and an allowlist containin
 - `localhost`
 - `127.0.0.1`
 
-This is intended to permit loopback access to:
+This is intended to permit the application's usual loopback endpoints:
 
 - `http://127.0.0.1:5178`
 - `http://127.0.0.1:8787`
 - `http://127.0.0.1:8188`
+
+However, the allowlist is by **host/IP, not by port**. Allowing `127.0.0.1` or `localhost` can make other ports on those loopback hosts reachable to sandboxed commands as well. The fixed ports above are therefore application conventions, not a security boundary.
+
+This trade-off is accepted for the current local WSL development workflow. If loopback access must be restricted to specific ports, enforce that at a lower layer such as an OS firewall, network namespace, container, or VM.
 
 Public Internet destinations and unrelated LAN/private-network destinations are not allowlisted. Do not replace this with `sandbox_workspace_write.network_access=true` without a proxy allowlist, because command networking enabled without an active enforcing proxy is broad direct outbound access.
 
@@ -162,8 +188,10 @@ The authoritative behavior is the current OpenAI permission documentation:
 
 When updating Codex or this configuration:
 
-- keep permission profiles and legacy `sandbox_mode` settings mutually exclusive
-- verify that the network proxy is active whenever domain allow rules are relied upon
-- preserve the loopback-only allowlist unless the repository requirements explicitly change
+- keep permission profiles and legacy `sandbox_mode` settings mutually exclusive across **all loaded configuration layers**, not only this repository
+- use `--strict-config`, `/debug-config`, `/permissions`, and `/status` as the startup gate before sensitive verification
+- run `scripts/verify-codex-isolation.sh` locally after Codex/config changes; CI build success is not evidence that the local isolation policy is enforced
+- verify network-proxy enforcement behavior whenever domain allow rules are relied upon
+- preserve the loopback-host-only allowlist unless the repository requirements explicitly change, and remember that it is not port-scoped
 - preserve the repository-first privacy intent even if syntax changes
 - if a profile cannot be enforced on the current WSL runtime, fail closed and report the limitation instead of falling back to broader access
