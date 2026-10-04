@@ -2,6 +2,33 @@
 
 Mobile-first web UI for driving a local ComfyUI instance from a PC or phone.
 
+## Project source of truth
+
+This repository is the canonical durable project state.
+
+A new ChatGPT session or coding agent should be able to recover the project without previous chat history by reading:
+
+1. this README
+2. [docs/product.md](docs/product.md)
+3. [docs/architecture.md](docs/architecture.md)
+4. [docs/development.md](docs/development.md)
+5. open GitHub Issues / relevant PRs
+6. source code and CI
+
+Important product or architecture decisions made in ChatGPT/Codex conversations should be written back to README/docs/Issues rather than left only in chat.
+
+For coding agents, see [AGENTS.md](AGENTS.md).
+
+For the ChatGPT web Project, use [docs/chatgpt-project-instructions.md](docs/chatgpt-project-instructions.md) as the Project Instructions baseline.
+
+## Current development split
+
+- **Local Codex:** primary implementation, local debugging, tests, commits/PRs
+- **ChatGPT Project:** requirements, UX, architecture, Issue shaping, implementation review
+- **GitHub:** shared source of truth between both
+
+See [docs/development.md](docs/development.md).
+
 ## Ports
 
 - Web UI: `0.0.0.0:5178`
@@ -98,3 +125,9 @@ server/data/history.json
 ```
 
 This is intentionally simple for the first connected prototype. SQLite can replace it once the interaction model settles.
+
+## Current verification status
+
+The repository contains the connected bridge implementation and CI build/type checks pass.
+
+The remaining important verification is against the user's **actual local ComfyUI API-format workflow** and real GPU environment. Track that work in the active GitHub Issue rather than relying on chat history.
