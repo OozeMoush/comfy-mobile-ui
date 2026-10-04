@@ -47,3 +47,24 @@ Do not infer or report the host filesystem layout from accidental error output o
 If a task appears to require a file outside the repository, stop and explain exactly which file/path is needed and why. Do not request or obtain broader filesystem access automatically.
 
 The only normal filesystem scope for this project is the repository itself.
+
+
+## Project-local Codex config
+
+This repository includes `.codex/config.toml`.
+
+When Codex is started from the repository root with:
+
+```bash
+codex
+```
+
+use the repository-local sandbox configuration automatically. Do not require a special profile for normal project work.
+
+The intended configuration is:
+
+- `sandbox_mode = "workspace-write"`
+- `approval_policy = "never"`
+- no extra writable roots
+- no network access from the workspace sandbox
+- no `/tmp` or TMPDIR-derived writable escape paths
