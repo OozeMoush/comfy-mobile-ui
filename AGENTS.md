@@ -21,3 +21,29 @@ For implementation work:
 - update docs when a design/architecture rule changes
 
 Avoid agent-only project knowledge. Keep durable decisions human-readable in README/docs/Issues.
+
+
+## Strict workspace boundary
+
+Treat the repository root (the current working directory when Codex is launched) as the complete project filesystem.
+
+Do **not** inspect, enumerate, read, search, stat, glob, or otherwise probe files/directories outside the repository root.
+
+This includes, unless the user explicitly authorizes a specific path for a specific task:
+
+- parent directories such as `..`
+- sibling repositories
+- the user's home directory
+- `/mnt/c` or other mounted host filesystems
+- unrelated WSL directories
+- global configuration files
+- caches outside the repository
+- directory listings intended only to discover what exists outside the repository
+
+Do not run commands such as `ls ..`, `find ..`, `tree ..`, broad filesystem searches, or absolute-path probes outside the repository.
+
+Do not infer or report the host filesystem layout from accidental error output or environment details.
+
+If a task appears to require a file outside the repository, stop and explain exactly which file/path is needed and why. Do not request or obtain broader filesystem access automatically.
+
+The only normal filesystem scope for this project is the repository itself.
