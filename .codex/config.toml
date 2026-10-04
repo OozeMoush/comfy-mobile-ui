@@ -16,6 +16,8 @@ extends = ":workspace"
 
 [permissions.comfy-local.network]
 enabled = true
+allow_local_binding = false
+allow_upstream_proxy = false
 
 [permissions.comfy-local.network.domains]
 "localhost" = "allow"

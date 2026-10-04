@@ -3,4 +3,5 @@ dist
 .vite
 *.local
 .DS_Store
+.cache/
 server/data/history.json
