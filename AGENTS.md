@@ -65,6 +65,8 @@ Use `node scripts/codex-local.mjs --check` for the preflight alone. If it fails,
 
 After guarded startup, use `/debug-config`, `/permissions` and `/status` to confirm the project layer, active `comfy-local` profile, approval policy and writable roots in the actual session. Stop if these differ from the checked policy. Do not copy raw configuration or host paths into project logs. The existing `bash scripts/verify-codex-isolation.sh` entry point runs the same guard without starting an agent.
 
+If a restricted sandbox hides the Codex runtime itself, the launcher supports deliberately supplied `.codex/runtime/codex` and `.codex/runtime/node` executable files. Never inspect/copy host runtime files or download them without explicit source-specific user authorization. Do not solve runtime visibility by adding outside filesystem grants. See `docs/local-codex-isolation.md`.
+
 The intended local policy is:
 
 - `approval_policy = "never"`

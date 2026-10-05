@@ -78,6 +78,21 @@ The guard starts a local stdio app-server and uses `config/read` and `permission
 
 The RPC includes known unset metadata as `null`. The guard permits only the observed unset filesystem scan-depth and network metadata fields; these are not path/domain grants. Unknown fields and non-null overrides still fail validation. A sandbox executable-start failure is reported separately from a boundary/proxy test failure, and neither is treated as successful enforcement.
 
+### Codex runtime visibility
+
+Codex 0.160.0 re-executes its own binary inside bubblewrap before starting the requested command. A restricted filesystem can hide that binary even when the host app-server runs successfully. Thus `bwrap: execvp` with an unavailable Codex executable is a runtime bootstrap failure, not a failed Node installation or successful access-denial test. This mechanism is visible in [the tagged upstream source](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/linux-sandbox/src/linux_run_main.rs), and [upstream issue #29049](https://github.com/openai/codex/issues/29049) reports the same class of failure.
+
+The launcher supports deliberately supplied regular executable files at:
+
+```text
+.codex/runtime/codex
+.codex/runtime/node
+```
+
+When present, the app-server and interactive session use that Codex executable. The fixture receives independent copies of both executables inside its own `.codex/runtime/`, and its probe uses that Node copy. This keeps runtime files inside the checked workspace and the built-in protected metadata boundary without adding any outside path grants. Runtime binaries are gitignored. Partial runtime installations and symlinks are rejected; the guard never follows them to discover host files.
+
+Obtaining/copying the two executables requires explicit user authorization for those source files or a specific download. The guard does not inspect installed runtime directories, copy outside files, install/download packages, change permissions or disable isolation automatically. Use native binaries, not npm/shell wrapper scripts that depend on outside package directories. Merely adding a runtime directory does not establish enforcement: the real fixture still has to pass. If the installed runtime works without local copies, the existing default command remains available and is subject to the same guard.
+
 Next, it creates an isolated nested workspace and a sibling canary under `.cache/codex-permissions/`. Both remain inside the real repository. The fixture receives a copy of the repository config and a process-local trust override for that generated workspace only. Commands use the resolved default policy without a `permissionProfile` or `sandboxPolicy` override. They must:
 
 - read and write the fixture's permitted file

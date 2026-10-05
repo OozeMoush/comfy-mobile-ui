@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { checkPermissions } from "./codex-permissions.mjs";
+import { repositoryRuntime } from "./codex-runtime.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
@@ -17,7 +18,8 @@ try {
   console.log("Codex permission preflight passed: " + JSON.stringify(result));
   if (!checkOnly) {
     // Start a new local server instead of reusing a daemon with older settings.
-    const child = spawn("codex", ["--strict-config", "--no-daemon", ...args], { cwd: root, stdio: "inherit" });
+    const runtime = await repositoryRuntime(root);
+    const child = spawn(runtime?.codex ?? "codex", ["--strict-config", "--no-daemon", ...args], { cwd: root, stdio: "inherit" });
     child.on("error", () => { console.error("Codex could not start."); process.exitCode = 1; });
     child.on("exit", code => { process.exitCode = code ?? 1; });
   }

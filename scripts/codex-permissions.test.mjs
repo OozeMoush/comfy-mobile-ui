@@ -5,6 +5,7 @@ import { PassThrough } from "node:stream";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { checkPermissions, readPolicy, startServer, validateConfig } from "./codex-permissions.mjs";
+import { copyRepositoryRuntime, repositoryRuntime } from "./codex-runtime.mjs";
 
 const profiles = [{ id: "comfy-local", allowed: true }];
 const good = () => ({
@@ -154,13 +155,17 @@ test("preflight rejects unsolicited approval requests", async () => {
   try { await assert.rejects(readPolicy(server, "/fixture"), /No agent was started/); } finally { await server.close(); }
 });
 
-for (const behavior of ["passed", "sandbox-failed", "sandbox-unavailable", "canary-mutated"]) {
+for (const behavior of ["passed", "local-runtime", "sandbox-failed", "sandbox-unavailable", "canary-mutated"]) {
   test(`fixture ${behavior}: default policy, repository-contained paths and cleanup`, async () => {
     const cache = path.join(process.cwd(), ".cache", "guard-tests");
     await fs.mkdir(cache, { recursive: true });
     const root = await fs.mkdtemp(path.join(cache, "run-"));
     await fs.mkdir(path.join(root, ".codex"));
     await fs.writeFile(path.join(root, ".codex", "config.toml"), "# synthetic fixture\n");
+    if (behavior === "local-runtime") {
+      await fs.mkdir(path.join(root, ".codex", "runtime"));
+      for (const name of ["codex", "node"]) await fs.writeFile(path.join(root, ".codex", "runtime", name), name, { mode: 0o755 });
+    }
     const calls = [];
     let closed = 0;
     let fixturePath;
@@ -169,7 +174,10 @@ for (const behavior of ["passed", "sandbox-failed", "sandbox-unavailable", "cana
       async close() { closed++; },
       async rpc(method, params) {
         calls.push(method);
-        if (method === "config/read") return { config: good() };
+        if (method === "config/read") {
+          if (behavior === "local-runtime") assert.equal(options.executable, path.join(cwd, ".codex", "runtime", "codex"));
+          return { config: good() };
+        }
         if (method === "permissionProfile/list") return { data: profiles };
         assert.equal(method, "command/exec");
         assert.equal(params.permissionProfile, undefined);
@@ -182,6 +190,11 @@ for (const behavior of ["passed", "sandbox-failed", "sandbox-unavailable", "cana
         }
         assert.equal(options.args[0], "-c");
         assert.ok(options.args[1].startsWith("projects="));
+        if (behavior === "local-runtime") {
+          assert.equal(params.command[0], path.join(cwd, ".codex", "runtime", "node"));
+          assert.equal(await fs.readFile(options.executable, "utf8"), "codex");
+          assert.equal(await fs.readFile(params.command[0], "utf8"), "node");
+        }
         const [inside, canary] = params.command.slice(3, 5);
         await fs.writeFile(inside, "updated");
         if (behavior === "canary-mutated") await fs.writeFile(canary, "unexpected");
@@ -190,14 +203,14 @@ for (const behavior of ["passed", "sandbox-failed", "sandbox-unavailable", "cana
       },
     });
     try {
-      if (behavior === "passed") {
+      if (behavior === "passed" || behavior === "local-runtime") {
         const result = await checkPermissions(root, { serverFactory });
         assert.equal(result.liveServices, "not checked");
         assert.equal(result.browser, "not checked");
       } else await assert.rejects(checkPermissions(root, { serverFactory }), error => {
         assert.match(error.message, /checks failed|boundary was not preserved/);
         if (behavior === "sandbox-unavailable") {
-          assert.match(error.message, /sandbox command could not start/);
+          assert.match(error.message, /sandbox runtime re-execution could not start/);
           assert.ok(!error.message.includes("/fake/private-executable"));
         }
         return true;
@@ -210,8 +223,12 @@ for (const behavior of ["passed", "sandbox-failed", "sandbox-unavailable", "cana
 }
 
 test("configuration refusal stops before fixture execution", async () => {
+  const cache = path.join(process.cwd(), ".cache", "guard-tests");
+  await fs.mkdir(cache, { recursive: true });
+  const root = await fs.mkdtemp(path.join(cache, "refused-"));
   let closed = false;
-  await assert.rejects(checkPermissions("/synthetic-unused-root", { serverFactory: () => ({
+  try {
+  await assert.rejects(checkPermissions(root, { serverFactory: () => ({
     async initialize() {}, async close() { closed = true; },
     async rpc(method) {
       if (method === "config/read") return { config: { ...good(), sandbox_mode: "workspace-write" } };
@@ -219,4 +236,39 @@ test("configuration refusal stops before fixture execution", async () => {
     },
   }) }), /Legacy sandbox/);
   assert.equal(closed, true);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+for (const variant of ["absent", "valid", "partial", "directory-symlink", "file-symlink", "not-executable"]) {
+  test(`repository runtime ${variant}: fixed local paths only`, async () => {
+    const cache = path.join(process.cwd(), ".cache", "runtime-tests");
+    await fs.mkdir(cache, { recursive: true });
+    const root = await fs.mkdtemp(path.join(cache, "run-"));
+    try {
+      await fs.mkdir(path.join(root, ".codex"));
+      if (variant === "absent") { assert.equal(await repositoryRuntime(root), null); return; }
+      const directory = path.join(root, ".codex", "runtime");
+      if (variant === "directory-symlink") {
+        await fs.mkdir(path.join(root, "target"));
+        await fs.symlink(path.join(root, "target"), directory);
+      } else {
+        await fs.mkdir(directory);
+        await fs.writeFile(path.join(directory, "codex"), "codex", { mode: variant === "not-executable" ? 0o644 : 0o755 });
+        if (variant !== "partial") await fs.writeFile(path.join(directory, "node"), "node", { mode: 0o755 });
+        if (variant === "file-symlink") {
+          await fs.unlink(path.join(directory, "codex"));
+          await fs.symlink(path.join(directory, "node"), path.join(directory, "codex"));
+        }
+      }
+      if (variant !== "valid") { await assert.rejects(repositoryRuntime(root), /Repository runtime/); return; }
+      const runtime = await repositoryRuntime(root);
+      const workspace = path.join(root, "fixture");
+      await fs.mkdir(path.join(workspace, ".codex"), { recursive: true });
+      const copy = await copyRepositoryRuntime(runtime, workspace);
+      assert.equal(await fs.readFile(copy.codex, "utf8"), "codex");
+      await fs.writeFile(runtime.codex, "changed");
+      assert.equal(await fs.readFile(copy.codex, "utf8"), "codex");
+      assert.equal((await fs.lstat(copy.node)).mode & 0o777, 0o555);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+}

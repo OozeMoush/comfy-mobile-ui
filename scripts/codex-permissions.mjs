@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { copyRepositoryRuntime, repositoryRuntime } from "./codex-runtime.mjs";
 
 function requirePolicy(condition, message) {
   if (!condition) throw new Error(message);
@@ -49,8 +50,8 @@ export function validateConfig(config, profiles) {
   "Only literal localhost and 127.0.0.1 may be allowlisted (all ports).");
 }
 
-export function startServer(cwd, { spawnImpl = spawn, timeoutMs = 20_000, args = [] } = {}) {
-  const child = spawnImpl("codex", ["app-server", "--stdio", "--strict-config", ...args], {
+export function startServer(cwd, { spawnImpl = spawn, timeoutMs = 20_000, args = [], executable = "codex" } = {}) {
+  const child = spawnImpl(executable, ["app-server", "--stdio", "--strict-config", ...args], {
     cwd, stdio: ["pipe", "pipe", "pipe"],
   });
   let nextId = 1;
@@ -173,7 +174,8 @@ function request(url) {
 export async function checkPermissions(cwd, { serverFactory = startServer } = {}) {
   // Use resolved settings, not the repository TOML alone, to detect inherited
   // legacy settings, an untrusted project, widened rules or a disabled proxy.
-  const server = serverFactory(cwd);
+  const runtime = await repositoryRuntime(cwd);
+  const server = serverFactory(cwd, runtime ? { executable: runtime.codex } : undefined);
   try { await readPolicy(server, cwd); } finally { await server.close(); }
 
   // An isolated nested git root simulates an outside file while every file is
@@ -192,6 +194,7 @@ export async function checkPermissions(cwd, { serverFactory = startServer } = {}
     await fs.mkdir(path.join(workspace, ".git", "objects"));
     await fs.mkdir(path.join(workspace, ".git", "refs"));
     await fs.copyFile(path.join(cwd, ".codex", "config.toml"), path.join(workspace, ".codex", "config.toml"));
+    const fixtureRuntime = runtime ? await copyRepositoryRuntime(runtime, workspace) : null;
     const allowed = path.join(workspace, "inside.txt");
     await fs.writeFile(allowed, "fixture");
     await fs.writeFile(denied, "canary");
@@ -200,12 +203,13 @@ export async function checkPermissions(cwd, { serverFactory = startServer } = {}
     const target = `http://127.0.0.1:${service.address().port}/`;
     // Trust only this generated fixture via a process-local override, without
     // changing user/global files or overriding permissions/sandbox settings.
-    fixtureServer = serverFactory(workspace, { args: ["-c", `projects={ ${JSON.stringify(workspace)} = { trust_level="trusted" } }`] });
+    fixtureServer = serverFactory(workspace, { args: ["-c", `projects={ ${JSON.stringify(workspace)} = { trust_level="trusted" } }`],
+      ...(fixtureRuntime ? { executable: fixtureRuntime.codex } : {}) });
     await readPolicy(fixtureServer, workspace);
     const result = await fixtureServer.rpc("command/exec", { cwd: workspace,
-      command: [process.execPath, "-e", probeSource, allowed, denied, target], timeoutMs: 15_000 });
+      command: [fixtureRuntime?.node ?? process.execPath, "-e", probeSource, allowed, denied, target], timeoutMs: 15_000 });
     requirePolicy(!(result?.exitCode !== 0 && /bwrap: execvp[^\n]*No such file or directory/.test(result?.stderr ?? "")),
-      "Behavioral sandbox/proxy checks failed: the sandbox command could not start. Check local runtime compatibility; no agent will be started.");
+      "Behavioral sandbox/proxy checks failed: sandbox runtime re-execution could not start. Repository-local Codex/Node executables may be needed; no host files will be copied automatically and no agent will be started.");
     requirePolicy(result?.exitCode === 0 && result.stdout?.trim() === "fixture-policy-passed",
       "Behavioral sandbox/proxy checks failed; no agent will be started.");
     requirePolicy(await fs.readFile(allowed, "utf8") === "updated" && await fs.readFile(denied, "utf8") === "canary",
