@@ -13,5 +13,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: bash -n scripts/verify-codex-isolation.sh
       - run: npm install
+      - run: node --test scripts/codex-permissions.test.mjs
       - run: npm run build

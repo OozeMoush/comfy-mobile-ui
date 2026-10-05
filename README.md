@@ -29,6 +29,8 @@ For the ChatGPT web Project, use [docs/chatgpt-project-instructions.md](docs/cha
 
 See [docs/development.md](docs/development.md).
 
+For guarded Local Codex startup from this repository, use `node scripts/codex-local.mjs` (or `--check` for preflight only). See [local isolation and validation limits](docs/local-codex-isolation.md). The startup guard must pass before isolation is treated as verified.
+
 ## Ports
 
 - Web UI: `0.0.0.0:5178`

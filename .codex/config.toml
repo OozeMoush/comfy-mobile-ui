@@ -1,7 +1,24 @@
-sandbox_mode = "workspace-write"
 approval_policy = "never"
+default_permissions = "comfy-local"
 
-[sandbox_workspace_write]
-exclude_tmpdir_env_var = true
-exclude_slash_tmp = true
-network_access = false
+[features]
+network_proxy = true
+
+[permissions.comfy-local]
+description = "Workspace-only filesystem access with loopback-only command networking for local ComfyUI verification."
+extends = ":workspace"
+
+[permissions.comfy-local.filesystem]
+":root" = "deny"
+":minimal" = "read"
+":tmpdir" = "deny"
+":slash_tmp" = "deny"
+
+[permissions.comfy-local.network]
+enabled = true
+allow_local_binding = false
+allow_upstream_proxy = false
+
+[permissions.comfy-local.network.domains]
+"localhost" = "allow"
+"127.0.0.1" = "allow"

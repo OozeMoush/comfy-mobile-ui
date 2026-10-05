@@ -148,7 +148,9 @@ Policy:
 
 Repository instructions are a policy layer, not a security boundary by themselves.
 
-For technical enforcement, use Codex with a workspace-scoped sandbox and no approval path for sandbox escape. Current Codex documentation describes `workspace-write` as the profile that operates in the current workspace, with crossing the workspace boundary requiring approval. For this project's stricter preference, use a configuration where sandbox escalation is not granted.
+Use the repository's `comfy-local` permissions profile and `node scripts/codex-local.mjs` guarded launcher. The launcher validates resolved settings and a repository-contained sandbox/proxy fixture before starting a fresh Codex session, and refuses failures without falling back to legacy sandbox overrides. See [local isolation](local-codex-isolation.md) for requirements, checks and validation limits. `node scripts/codex-local.mjs --check` runs the same preflight without starting an agent.
+
+The domain allowlist allows all ports on literal `localhost` and `127.0.0.1`, rather than restricting access to the application's three ports. CI guard tests and application builds do not prove real WSL enforcement or Playwright connectivity; record those separately from an actual guarded session.
 
 If the requirement is stronger — e.g. even host directory names outside the repository must not be observable — run Codex in an isolated container/VM and mount only this repository as project data. That is the strongest boundary because the outside host filesystem is not present in the agent environment at all.
 
