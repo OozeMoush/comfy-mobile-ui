@@ -76,6 +76,8 @@ node scripts/codex-local.mjs --check
 
 The guard starts a local stdio app-server and uses `config/read` and `permissionProfile/list` to check the **resolved** configuration and profile availability. It requires the documented profile, `approval_policy = "never"`, an enabled proxy, the exact filesystem boundary and loopback-only allow rules. Project trust problems, unsupported APIs, unexpected options, process failures and timeouts stop the launcher. It does not start a model turn, perform credential setup, grant approval or modify global/user configuration. Raw server logs, configuration values and configuration origins are not printed or retained by the guard.
 
+The RPC includes known unset metadata as `null`. The guard permits only the observed unset filesystem scan-depth and network metadata fields; these are not path/domain grants. Unknown fields and non-null overrides still fail validation. A sandbox executable-start failure is reported separately from a boundary/proxy test failure, and neither is treated as successful enforcement.
+
 Next, it creates an isolated nested workspace and a sibling canary under `.cache/codex-permissions/`. Both remain inside the real repository. The fixture receives a copy of the repository config and a process-local trust override for that generated workspace only. Commands use the resolved default policy without a `permissionProfile` or `sandboxPolicy` override. They must:
 
 - read and write the fixture's permitted file

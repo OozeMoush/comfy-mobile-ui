@@ -25,7 +25,10 @@ export function validateConfig(config, profiles) {
     "Additional profile workspace roots are not permitted.");
   const expected = { ":root": "deny", ":minimal": "read", ":tmpdir": "deny", ":slash_tmp": "deny" };
   const files = profile.filesystem;
-  requirePolicy(files && Object.keys(files).length === Object.keys(expected).length &&
+  // config/read serializes known unset options as null. They are metadata,
+  // not extra path grants; unknown fields and non-null overrides still fail.
+  const fileKeys = Object.keys(files ?? {}).filter(key => !(key === "glob_scan_max_depth" && files[key] == null));
+  requirePolicy(files && fileKeys.length === Object.keys(expected).length &&
     Object.entries(expected).every(([key, value]) => files[key] === value),
   "Filesystem rules differ from the repository boundary.");
   const network = profile.network;
@@ -34,7 +37,9 @@ export function validateConfig(config, profiles) {
     "Local/private-network expansion and upstream proxies must be explicitly disabled.");
   const known = ["enabled", "domains", "allow_local_binding", "allow_upstream_proxy", "unix_sockets",
     "dangerously_allow_all_unix_sockets", "dangerously_allow_non_loopback_proxy"];
-  requirePolicy(Object.keys(network).every(key => known.includes(key)), "Unexpected network overrides require review.");
+  const unsetOptions = ["proxy_url", "enable_socks5", "socks_url", "enable_socks5_udp", "mode", "mitm"];
+  requirePolicy(Object.keys(network).every(key => known.includes(key) ||
+    (unsetOptions.includes(key) && network[key] == null)), "Unexpected network overrides require review.");
   requirePolicy(!network.dangerously_allow_all_unix_sockets && !network.dangerously_allow_non_loopback_proxy &&
     !Object.values(network.unix_sockets ?? {}).some(value => value !== "deny"), "Network escape hatches are not permitted.");
   const domains = network.domains ?? {};
@@ -199,6 +204,8 @@ export async function checkPermissions(cwd, { serverFactory = startServer } = {}
     await readPolicy(fixtureServer, workspace);
     const result = await fixtureServer.rpc("command/exec", { cwd: workspace,
       command: [process.execPath, "-e", probeSource, allowed, denied, target], timeoutMs: 15_000 });
+    requirePolicy(!(result?.exitCode !== 0 && /bwrap: execvp[^\n]*No such file or directory/.test(result?.stderr ?? "")),
+      "Behavioral sandbox/proxy checks failed: the sandbox command could not start. Check local runtime compatibility; no agent will be started.");
     requirePolicy(result?.exitCode === 0 && result.stdout?.trim() === "fixture-policy-passed",
       "Behavioral sandbox/proxy checks failed; no agent will be started.");
     requirePolicy(await fs.readFile(allowed, "utf8") === "updated" && await fs.readFile(denied, "utf8") === "canary",

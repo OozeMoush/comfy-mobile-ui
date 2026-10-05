@@ -18,6 +18,50 @@ const good = () => ({
 
 test("the intended resolved policy is accepted", () => assert.doesNotThrow(() => validateConfig(good(), profiles)));
 
+// Shape observed from Codex 0.160.0 config/read; deliberately contains only
+// this repository's policy fields, without host paths or runtime config.
+const serializedGood = () => {
+  const config = good();
+  config.permissions["comfy-local"].filesystem.glob_scan_max_depth = null;
+  Object.assign(config.permissions["comfy-local"].network, {
+    proxy_url: null, enable_socks5: null, socks_url: null, enable_socks5_udp: null,
+    dangerously_allow_non_loopback_proxy: null, dangerously_allow_all_unix_sockets: null,
+    mode: null, mitm: null, unix_sockets: null,
+  });
+  return config;
+};
+test("accepts the real RPC shape with known unset metadata", () => {
+  assert.doesNotThrow(() => validateConfig(serializedGood(), profiles));
+});
+test("reads a serialized policy through the RPC before validation", async () => {
+  const server = {
+    async initialize() {},
+    async rpc(method) {
+      return method === "config/read" ? { config: serializedGood() } : { data: profiles };
+    },
+  };
+  await readPolicy(server, "/fixture");
+});
+for (const [field, value] of Object.entries({ proxy_url: "http://example.invalid:3128", enable_socks5: true,
+  socks_url: "http://example.invalid:8081", enable_socks5_udp: true, mode: "limited", mitm: {} })) {
+  test(`refuses non-null override for serialized ${field}`, () => {
+    const config = serializedGood(); config.permissions["comfy-local"].network[field] = value;
+    assert.throws(() => validateConfig(config, profiles), /Unexpected network overrides/);
+  });
+}
+test("does not ignore unknown null fields or path grants", () => {
+  for (const location of ["filesystem", "network"]) {
+    const config = serializedGood(); config.permissions["comfy-local"][location].unreviewed = null;
+    assert.throws(() => validateConfig(config, profiles));
+  }
+  const config = serializedGood(); config.permissions["comfy-local"].filesystem["/fake/private"] = null;
+  assert.throws(() => validateConfig(config, profiles), /Filesystem rules differ/);
+});
+test("does not ignore non-null filesystem metadata", () => {
+  const config = serializedGood(); config.permissions["comfy-local"].filesystem.glob_scan_max_depth = 3;
+  assert.throws(() => validateConfig(config, profiles), /Filesystem rules differ/);
+});
+
 const cases = [
   ["legacy mode inherited from another config layer", c => { c.sandbox_mode = "workspace-write"; }],
   ["legacy options table", c => { c.sandbox_workspace_write = { network_access: true }; }],
@@ -110,7 +154,7 @@ test("preflight rejects unsolicited approval requests", async () => {
   try { await assert.rejects(readPolicy(server, "/fixture"), /No agent was started/); } finally { await server.close(); }
 });
 
-for (const behavior of ["passed", "sandbox-failed", "canary-mutated"]) {
+for (const behavior of ["passed", "sandbox-failed", "sandbox-unavailable", "canary-mutated"]) {
   test(`fixture ${behavior}: default policy, repository-contained paths and cleanup`, async () => {
     const cache = path.join(process.cwd(), ".cache", "guard-tests");
     await fs.mkdir(cache, { recursive: true });
@@ -141,7 +185,8 @@ for (const behavior of ["passed", "sandbox-failed", "canary-mutated"]) {
         const [inside, canary] = params.command.slice(3, 5);
         await fs.writeFile(inside, "updated");
         if (behavior === "canary-mutated") await fs.writeFile(canary, "unexpected");
-        return { exitCode: behavior === "sandbox-failed" ? 1 : 0, stdout: "fixture-policy-passed\n", stderr: "" };
+        return { exitCode: behavior.startsWith("sandbox-") ? 1 : 0, stdout: "fixture-policy-passed\n",
+          stderr: behavior === "sandbox-unavailable" ? "bwrap: execvp /fake/private-executable: No such file or directory\n" : "" };
       },
     });
     try {
@@ -149,7 +194,14 @@ for (const behavior of ["passed", "sandbox-failed", "canary-mutated"]) {
         const result = await checkPermissions(root, { serverFactory });
         assert.equal(result.liveServices, "not checked");
         assert.equal(result.browser, "not checked");
-      } else await assert.rejects(checkPermissions(root, { serverFactory }), /checks failed|boundary was not preserved/);
+      } else await assert.rejects(checkPermissions(root, { serverFactory }), error => {
+        assert.match(error.message, /checks failed|boundary was not preserved/);
+        if (behavior === "sandbox-unavailable") {
+          assert.match(error.message, /sandbox command could not start/);
+          assert.ok(!error.message.includes("/fake/private-executable"));
+        }
+        return true;
+      });
       assert.equal(closed, 2);
       assert.equal(calls.filter(method => method === "command/exec").length, 1);
       await assert.rejects(fs.access(fixturePath), { code: "ENOENT" });
